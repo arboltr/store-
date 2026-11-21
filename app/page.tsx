@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
+import ChatWidget from "./components/ChatWidget";
 
 interface Product {
   id: number;
@@ -757,6 +758,9 @@ export default function BershkaStore() {
           )}
         </main>
       </div>
+
+      {/* INTELLIGENT AI STYLIST CHAT */}
+      <ChatWidget />
     </div>
   );
 }
