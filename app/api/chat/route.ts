@@ -44,6 +44,14 @@ Pautas de respuesta:
 - Da consejos prácticos de cómo combinar las prendas (calzado, pantalones, accesorios, ocasiones).
 - Si el cliente tiene dudas sobre tallas, recuérdale que los modelos ajustados suelen requerir una talla más si prefiere un fit más holgado.`;
 
+// List of models in order of priority. If one has high demand (503) or rate limit (429), it automatically falls back to the next!
+const MODELS_TO_TRY = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-3.8-flash",
+  "gemini-4-hydrogen",
+];
+
 export async function POST(req: Request) {
   try {
     const apiKey = getApiKey();
@@ -68,40 +76,57 @@ export async function POST(req: Request) {
       parts: [{ text: m.content }],
     }));
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
+    let lastError: any = null;
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        system_instruction: {
-          parts: [{ text: SYSTEM_INSTRUCTION }],
-        },
-        contents,
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 600,
-        },
-      }),
-    });
+    // Try models with automatic fallback
+    for (const model of MODELS_TO_TRY) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-    const data = await response.json();
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            system_instruction: {
+              parts: [{ text: SYSTEM_INSTRUCTION }],
+            },
+            contents,
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 600,
+            },
+          }),
+        });
 
-    if (!response.ok) {
-      console.error("Gemini API error:", data);
-      return NextResponse.json(
-        { error: data.error?.message || "Error al comunicarse con Gemini" },
-        { status: response.status }
-      );
+        const data = await response.json();
+
+        if (response.ok) {
+          const reply =
+            data.candidates?.[0]?.content?.parts?.[0]?.text ||
+            "¡Hola! ¿En qué puedo ayudarte hoy con tu estilo Bershka?";
+
+          return NextResponse.json({ reply, modelUsed: model });
+        }
+
+        // If high demand (503) or rate limit (429), log and proceed to next model
+        console.warn(`Model ${model} returned ${response.status}: ${data.error?.message}. Intentando fallback...`);
+        lastError = data.error?.message || `Error ${response.status}`;
+      } catch (err: any) {
+        console.warn(`Error connecting to model ${model}:`, err.message);
+        lastError = err.message;
+      }
     }
 
-    const reply =
-      data.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "Lo siento, no pude procesar la respuesta en este momento.";
-
-    return NextResponse.json({ reply });
+    return NextResponse.json(
+      {
+        error:
+          "Los servidores de IA están experimentando una alta demanda temporal. Por favor, reintenta tu pregunta en unos segundos.",
+        detail: lastError,
+      },
+      { status: 503 }
+    );
   } catch (error: any) {
     console.error("API route error:", error);
     return NextResponse.json(
